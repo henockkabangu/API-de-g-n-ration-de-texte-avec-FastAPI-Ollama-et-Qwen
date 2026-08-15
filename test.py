@@ -1,115 +1,243 @@
 import requests
 
+from rag import search_corpus, build_context
+from model import generate_response
 
-BASE_URL = "http://localhost:8000"
 
+# ============================================================
+# TEST 1 : RECHERCHE DANS LE CORPUS
+# ============================================================
 
-def test_root():
+def test_rag():
 
-    response = requests.get(
-        f"{BASE_URL}/"
+    print("\n")
+    print("=" * 60)
+    print("TEST 1 : RECHERCHE DANS LE CORPUS")
+    print("=" * 60)
+
+    query = input(
+        "Entrez un mot à rechercher : "
     )
 
-    assert response.status_code == 200
+    results = search_corpus(query)
 
-    data = response.json()
+    if not results:
 
-    assert data["message"] == "LLM API opérationnelle"
+        print(
+            "\n❌ Aucune correspondance trouvée."
+        )
 
-    print("✅ / fonctionne")
+        return
 
-
-def test_health():
-
-    response = requests.get(
-        f"{BASE_URL}/health"
+    print(
+        f"\n✅ {len(results)} résultat(s) trouvé(s)\n"
     )
 
-    assert response.status_code == 200
+    for result in results:
 
-    data = response.json()
+        print(
+            f"Tshiluba : {result['ciluba']}"
+        )
 
-    assert data["status"] == "ok"
+        print(
+            f"Français : {result['francais']}"
+        )
 
-    print("✅ /health fonctionne")
+        if "nature" in result:
+            print(
+                f"Nature : {result['nature']}"
+            )
+
+        print("-" * 40)
 
 
-def get_token():
+# ============================================================
+# TEST 2 : QWEN
+# ============================================================
 
-    response = requests.post(
-        f"{BASE_URL}/login",
-        data={
-            "username": "henock",
-            "password": "123456"
-        }
+def test_qwen():
+
+    print("\n")
+    print("=" * 60)
+    print("TEST 2 : QWEN")
+    print("=" * 60)
+
+    question = input(
+        "Posez une question : "
     )
 
-    assert response.status_code == 200
+    # Recherche préalable
+    results = search_corpus(question)
 
-    data = response.json()
+    if not results:
 
-    assert "access_token" in data
+        print(
+            "\n⚠️ Aucun résultat dans le corpus."
+        )
 
-    print("✅ /login fonctionne")
+        print(
+            "Qwen ne sera pas utilisé pour inventer "
+            "une traduction."
+        )
 
-    return data["access_token"]
+        return
 
+    # Construction du contexte
+    context = build_context(results)
 
-def test_protected():
+    print("\nContexte récupéré :")
+    print(context)
 
-    token = get_token()
+    print("\n⏳ Interrogation de Qwen...")
 
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    response = requests.get(
-        f"{BASE_URL}/protected",
-        headers=headers
+    response = generate_response(
+        question,
+        context
     )
 
-    assert response.status_code == 200
-
-    data = response.json()
-
-    assert data["authenticated"] is True
-
-    print("✅ /protected fonctionne")
+    print("\n🤖 Réponse de Qwen :")
+    print(response)
 
 
-def test_generate():
+# ============================================================
+# TEST 3 : OLLAMA DIRECT
+# ============================================================
 
-    token = get_token()
+def test_ollama():
 
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
+    print("\n")
+    print("=" * 60)
+    print("TEST 3 : CONNEXION OLLAMA")
+    print("=" * 60)
 
-    response = requests.post(
-        f"{BASE_URL}/generate",
-        headers=headers,
-        json={
-            "prompt": "Explique ce qu'est une API en deux phrases."
-        }
+    url = (
+        "http://host.docker.internal:11434/api/tags"
     )
 
-    assert response.status_code == 200
+    try:
 
-    data = response.json()
+        response = requests.get(
+            url,
+            timeout=10
+        )
 
-    assert data["prompt"] == "Explique ce qu'est une API en deux phrases."
-    assert "response" in data
-    assert len(data["response"]) > 0
+        print(
+            f"Status HTTP : {response.status_code}"
+        )
 
-    print("✅ /generate fonctionne")
-    print("🤖 Réponse :", data["response"])
+        if response.status_code == 200:
 
+            print(
+                "✅ Ollama est accessible."
+            )
+
+            print(
+                response.json()
+            )
+
+        else:
+
+            print(
+                "❌ Ollama a retourné une erreur."
+            )
+
+    except Exception as e:
+
+        print(
+            f"❌ Impossible de contacter Ollama : {e}"
+        )
+
+
+# ============================================================
+# TEST 4 : API FASTAPI
+# ============================================================
+
+def test_api():
+
+    print("\n")
+    print("=" * 60)
+    print("TEST 4 : API FASTAPI")
+    print("=" * 60)
+
+    url = "http://127.0.0.1:8000/"
+
+    try:
+
+        response = requests.get(
+            url,
+            timeout=10
+        )
+
+        print(
+            f"Status HTTP : {response.status_code}"
+        )
+
+        print(
+            "Réponse :"
+        )
+
+        print(
+            response.json()
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ API inaccessible : {e}"
+        )
+
+
+# ============================================================
+# MENU PRINCIPAL
+# ============================================================
 
 if __name__ == "__main__":
 
-    test_root()
-    test_health()
-    test_protected()
-    test_generate()
+    print("\n")
+    print("=" * 60)
+    print(" ASSISTANT TSHILUBA - FRANÇAIS")
+    print("=" * 60)
 
-    print("\n🎉 Tous les tests sont passés avec succès !")
+    print("""
+1 - Tester la recherche dans le corpus
+2 - Tester Qwen avec le contexte du corpus
+3 - Tester la connexion Ollama
+4 - Tester l'API FastAPI
+5 - Tout tester
+0 - Quitter
+""")
+
+    choix = input(
+        "Votre choix : "
+    )
+
+    if choix == "1":
+
+        test_rag()
+
+    elif choix == "2":
+
+        test_qwen()
+
+    elif choix == "3":
+
+        test_ollama()
+
+    elif choix == "4":
+
+        test_api()
+
+    elif choix == "5":
+
+        test_rag()
+        test_qwen()
+        test_ollama()
+        test_api()
+
+    elif choix == "0":
+
+        print("Programme terminé.")
+
+    else:
+
+        print("Choix invalide.")
