@@ -1,124 +1,68 @@
-from datetime import datetime, timedelta, timezone
+import time
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import JWTError, jwt
+from jose import jwt
 from pydantic import BaseModel
 
-from model import generate_text
+from rag import search_corpus, build_context
+from model import generate_response
 
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+APP_NAME = "Assistant intelligent lexical Tshiluba-Français"
+
+SECRET_KEY = "secret-dev-key"
+ALGORITHM = "HS256"
+
+USERNAME = "admin"
+PASSWORD = "admin"
+
+
+# ============================================================
+# INITIALISATION FASTAPI
+# ============================================================
 
 app = FastAPI(
-    title="LLM API",
-    description="API de génération de texte avec Ollama et authentification JWT",
+    title=APP_NAME,
+    description=(
+        "Assistant intelligent lexical bilingue "
+        "Tshiluba-Français"
+    ),
     version="1.0.0"
 )
 
 
-# =========================
-# JWT
-# =========================
+# ============================================================
+# AUTHENTIFICATION JWT
+# ============================================================
 
-SECRET_KEY = "cle-secrete-tp-a-remplacer"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl="/login"
+)
 
 
-# =========================
-# UTILISATEUR DE TEST
-# =========================
-
-USER = {
-    "username": "henock",
-    "password": "123456"
-}
-
-
-# =========================
-# REQUÊTE GENERATE
-# =========================
-
-class GenerateRequest(BaseModel):
-    prompt: str
-
-
-# =========================
-# CREATION JWT
-# =========================
-
-def create_access_token(username: str):
-
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
-    )
+def create_token(username: str):
 
     payload = {
-        "sub": username,
-        "exp": expire
+        "sub": username
     }
 
-    return jwt.encode(
+    token = jwt.encode(
         payload,
         SECRET_KEY,
         algorithm=ALGORITHM
     )
 
-
-# =========================
-# ROUTE PRINCIPALE
-# =========================
-
-@app.get("/")
-def root():
-    return {
-        "message": "LLM API opérationnelle"
-    }
+    return token
 
 
-# =========================
-# HEALTH CHECK
-# =========================
-
-@app.get("/health")
-def health():
-    return {
-        "status": "ok"
-    }
-
-
-# =========================
-# LOGIN
-# =========================
-
-@app.post("/login")
-def login(
-    form_data: OAuth2PasswordRequestForm = Depends()
+def verify_token(
+    token: str = Depends(oauth2_scheme)
 ):
-
-    if (
-        form_data.username != USER["username"]
-        or form_data.password != USER["password"]
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Identifiants incorrects"
-        )
-
-    token = create_access_token(form_data.username)
-
-    return {
-        "access_token": token,
-        "token_type": "bearer"
-    }
-
-
-# =========================
-# VERIFICATION JWT
-# =========================
-
-def verify_token(token: str):
 
     try:
 
@@ -130,7 +74,8 @@ def verify_token(token: str):
 
         username = payload.get("sub")
 
-        if username is None:
+        if not username:
+
             raise HTTPException(
                 status_code=401,
                 detail="Token invalide"
@@ -138,7 +83,7 @@ def verify_token(token: str):
 
         return username
 
-    except JWTError:
+    except Exception:
 
         raise HTTPException(
             status_code=401,
@@ -146,40 +91,221 @@ def verify_token(token: str):
         )
 
 
-# =========================
-# ROUTE PROTEGEE
-# =========================
+# ============================================================
+# MODÈLES DE REQUÊTES
+# ============================================================
 
-@app.get("/protected")
-def protected(
-    token: str = Depends(oauth2_scheme)
-):
+class SearchRequest(BaseModel):
 
-    username = verify_token(token)
+    query: str
+
+
+class GenerateRequest(BaseModel):
+
+    question: str
+
+
+# ============================================================
+# ROUTE PRINCIPALE
+# ============================================================
+
+@app.get("/")
+def root():
 
     return {
-        "message": f"Bienvenue {username}",
-        "authenticated": True
+        "application": APP_NAME,
+        "status": "online",
+        "message": (
+            "API de l'assistant lexical "
+            "Tshiluba-Français opérationnelle."
+        )
     }
 
 
-# =========================
-# GENERATION AVEC OLLAMA
-# =========================
+# ============================================================
+# LOGIN
+# ============================================================
+
+@app.post("/login")
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends()
+):
+
+    if (
+        form_data.username != USERNAME
+        or form_data.password != PASSWORD
+    ):
+
+        raise HTTPException(
+            status_code=401,
+            detail="Nom d'utilisateur ou mot de passe incorrect"
+        )
+
+    token = create_token(
+        form_data.username
+    )
+
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
+
+
+# ============================================================
+# RECHERCHE LEXICALE
+# ============================================================
+
+@app.post("/search")
+def search(
+    request: SearchRequest,
+    username: str = Depends(verify_token)
+):
+
+    start_time = time.time()
+
+    query = request.query.strip()
+
+    if not query:
+
+        raise HTTPException(
+            status_code=400,
+            detail="La requête ne peut pas être vide."
+        )
+
+    # Recherche dans le corpus
+    results = search_corpus(query)
+
+    processing_time = (
+        time.time() - start_time
+    )
+
+    # Aucun résultat
+    if not results:
+
+        return {
+            "success": True,
+            "found": False,
+            "query": query,
+            "results": [],
+            "message": (
+                "Aucune correspondance trouvée "
+                "dans le corpus."
+            ),
+            "processing_time": round(
+                processing_time,
+                4
+            )
+        }
+
+    # Résultats trouvés
+    return {
+        "success": True,
+        "found": True,
+        "query": query,
+        "results": results,
+        "count": len(results),
+        "processing_time": round(
+            processing_time,
+            4
+        )
+    }
+
+
+# ============================================================
+# GÉNÉRATION AVEC QWEN
+# ============================================================
 
 @app.post("/generate")
 def generate(
     request: GenerateRequest,
-    token: str = Depends(oauth2_scheme)
+    username: str = Depends(verify_token)
 ):
 
-    username = verify_token(token)
+    question = request.question.strip()
 
-    response = generate_text(request.prompt)
+    if not question:
+
+        raise HTTPException(
+            status_code=400,
+            detail="La question ne peut pas être vide."
+        )
+
+    start_time = time.time()
+
+    # --------------------------------------------------------
+    # ÉTAPE 1 : RECHERCHE DANS LE CORPUS
+    # --------------------------------------------------------
+
+    results = search_corpus(question)
+
+    # --------------------------------------------------------
+    # ÉTAPE 2 : SI AUCUNE INFORMATION N'EST TROUVÉE
+    # --------------------------------------------------------
+
+    if not results:
+
+        return {
+            "success": True,
+            "found": False,
+            "question": question,
+            "source": "corpus",
+            "response": (
+                "Je n'ai trouvé aucune correspondance "
+                "dans le corpus. Je ne vais pas inventer "
+                "une traduction ou une information."
+            ),
+            "processing_time": round(
+                time.time() - start_time,
+                4
+            )
+        }
+
+    # --------------------------------------------------------
+    # ÉTAPE 3 : CONSTRUCTION DU CONTEXTE
+    # --------------------------------------------------------
+
+    context = build_context(results)
+
+    # --------------------------------------------------------
+    # ÉTAPE 4 : ENVOI DU CONTEXTE À QWEN
+    # --------------------------------------------------------
+
+    response = generate_response(
+        question=question,
+        context=context
+    )
+
+    # --------------------------------------------------------
+    # ÉTAPE 5 : RÉPONSE FINALE
+    # --------------------------------------------------------
 
     return {
-        "user": username,
-        "prompt": request.prompt,
-        "response": response
+        "success": True,
+        "found": True,
+        "question": question,
+        "source": "corpus + Qwen",
+        "corpus_results": results,
+        "response": response,
+        "processing_time": round(
+            time.time() - start_time,
+            4
+        )
     }
-    
+
+
+# ============================================================
+# INFORMATIONS SUR L'API
+# ============================================================
+
+@app.get("/health")
+def health():
+
+    return {
+        "status": "healthy",
+        "application": APP_NAME,
+        "services": {
+            "api": "online",
+            "corpus": "available",
+            "qwen": "configured"
+        }
+    }
